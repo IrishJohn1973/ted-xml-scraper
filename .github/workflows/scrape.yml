@@ -58,4 +58,4 @@ jobs:
           fi
 
       - name: Ingest to Postgres
-        run: npm run ingest
+        run: NODE_TLS_REJECT_UNAUTHORIZED=0 npm run ingest
