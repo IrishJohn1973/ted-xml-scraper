@@ -1,0 +1,172 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+
+const OUT_DIR = 'data/raw';
+mkdirSync(OUT_DIR, { recursive: true });
+
+const START_URL = process.env.TED_SEARCH_URL || process.argv[2] || '';
+if (!START_URL) {
+  console.error('Usage: TED_SEARCH_URL="https://ted.europa.eu/en/advanced-search?..."" node src/scrape_ted.mjs');
+  process.exit(1);
+}
+
+const MAX_PAGES   = Number(process.env.TED_MAX_PAGES   || 1);
+const MAX_NOTICES = Number(process.env.TED_MAX_NOTICES || 20);
+const SLEEP = ms => new Promise(r => setTimeout(r, ms));
+
+const SAME_HOST = new URL(START_URL).host;
+
+function ts() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());
+}
+
+async function collectNoticeLinks(page) {
+  // Strict: only links on ted.europa.eu that clearly look like notice detail pages
+  const links = await page.$$eval('a[href]', els =>
+    els.map(a => a.href)
+      .filter(Boolean)
+  );
+  const filtered = links.filter(h => {
+    try {
+      const u = new URL(h);
+      if (u.host !== location.host) return false;
+      // typical shapes include /en/notice/..., /notice/...
+      return /\/notice\//i.test(u.pathname) && !/\/simap\//i.test(u.pathname);
+    } catch { return false; }
+  });
+  return Array.from(new Set(filtered)).slice(0, 100);
+}
+
+async function findXmlUrl(page) {
+  // 1) Direct .xml links
+  let href = await page.$$eval('a[href]', as => {
+    for (const a of as) {
+      const h = a.getAttribute('href');
+      if (h && /\.xml(\?|$)/i.test(h)) {
+        try { return new URL(h, location.href).href; } catch { return h; }
+      }
+    }
+    return null;
+  });
+  if (href) return href;
+
+  // 2) Buttons/links labeled XML → click, then rescan links
+  try {
+    const xmlButton = await page.$('text=/\\bXML\\b/i');
+    if (xmlButton) {
+      await xmlButton.click({ delay: 50 });
+      await page.waitForTimeout(800);
+      href = await page.$$eval('a[href]', as => {
+        for (const a of as) {
+          const h = a.getAttribute('href');
+          if (h && /\.xml(\?|$)/i.test(h)) {
+            try { return new URL(h, location.href).href; } catch { return h; }
+          }
+        }
+        return null;
+      });
+      if (href) return href;
+    }
+  } catch { /* ignore */ }
+
+  // 3) Heuristic: any link that looks like a "download" with format param
+  href = await page.$$eval('a[href]', as => {
+    for (const a of as) {
+      const h = a.getAttribute('href') || '';
+      if (/download/i.test(h) && /xml/i.test(h)) {
+        try { return new URL(h, location.href).href; } catch { return h; }
+      }
+    }
+    return null;
+  });
+  return href || null;
+}
+
+async function goToNextResults(page) {
+  // Prefer rel=next
+  const relNext = await page.$('a[rel=next],button[rel=next]');
+  if (relNext) { await relNext.click(); return true; }
+
+  // Otherwise try a button/link with "Next"
+  const candidates = await page.$$('a,button');
+  for (const el of candidates) {
+    const t = (await el.innerText().catch(() => ''))?.trim();
+    if (t && /^next\b/i.test(t)) {
+      await el.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+async function main() {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36 TedXMLScraper/1.1'
+  });
+  const page = await context.newPage();
+
+  let total = 0;
+  let pageNo = 0;
+  let url = START_URL;
+
+  while (pageNo < MAX_PAGES && total < MAX_NOTICES) {
+    pageNo++;
+    console.log(`[results] ${url}`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await page.waitForTimeout(1500);
+
+    const noticeLinks = (await collectNoticeLinks(page)).slice(0, MAX_NOTICES - total);
+    for (const nurl of noticeLinks) {
+      if (total >= MAX_NOTICES) break;
+      console.log(`[notice] ${nurl}`);
+      const p2 = await context.newPage();
+      try {
+        await p2.goto(nurl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+        await p2.waitForTimeout(1200);
+
+        const xmlUrl = await findXmlUrl(p2);
+        if (!xmlUrl) {
+          console.warn('  - no XML link found');
+          await p2.close();
+          continue;
+        }
+        console.log(`  -> xml ${xmlUrl}`);
+
+        const resp = await p2.request.get(xmlUrl, { timeout: 120_000 });
+        if (!resp.ok()) {
+          console.warn('  - download failed: ' + resp.status());
+          await p2.close();
+          continue;
+        }
+        const body = await resp.body();
+        const filename = join(OUT_DIR, `ted_${ts()}_${String(total+1).padStart(4,'0')}.xml`);
+        writeFileSync(filename, body);
+        console.log(`  + saved ${filename}`);
+        total++;
+        await SLEEP(500);
+      } catch (e) {
+        console.warn('  - error: ' + e.message);
+      } finally {
+        await p2.close();
+      }
+      if (total >= MAX_NOTICES) break;
+    }
+
+    if (total >= MAX_NOTICES) break;
+    if (pageNo >= MAX_PAGES) break;
+
+    const advanced = await goToNextResults(page);
+    if (!advanced) break;
+    await page.waitForTimeout(1200);
+    url = page.url();
+  }
+
+  await browser.close();
+  console.log(`Done. Downloaded ${total} XML file(s) to ${OUT_DIR}`);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

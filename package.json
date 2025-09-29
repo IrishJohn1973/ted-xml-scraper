@@ -1,0 +1,20 @@
+{
+  "name": "ted-xml-scraper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "ingest": "node src/ingest.mjs",
+    "scrape": "node src/scrape_ted.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.2.2",
+    "fast-xml-parser": "^5.2.5",
+    "pg": "^8.16.3",
+    "playwright": "^1.55.1"
+  }
+}

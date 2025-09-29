@@ -1,0 +1,20 @@
+# env & secrets
+.env
+
+# dependencies
+node_modules/
+
+# build/cache/data
+data/
+tools/saxon/
+urls.txt
+
+# OS/editor cruft
+.DS_Store
+*.log
+
+# compiled artifacts
+*.jar
+
+# lockfiles (optional)
+package-lock.json
