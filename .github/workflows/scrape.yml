@@ -13,11 +13,10 @@ jobs:
       TED_SEARCH_URL: "https://ted.europa.eu/en/advanced-search?search-txt=&published=90&nature-of-contract=all&language=en"
       TED_MAX_PAGES: "50"
       TED_MAX_NOTICES: "2000"
-      # Fallback sweep window (tune as needed)
       YEAR: "2025"
-      START_ID: "636260"
-      END_ID: "635800"
-      MAX_MISS: "220"
+      START_ID: "636180"
+      END_ID: "635940"
+      MAX_MISS: "300"
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PGSSLMODE: "require"
       PLAYWRIGHT_BROWSERS_PATH: "0"
@@ -37,8 +36,15 @@ jobs:
       - name: Scrape XML (throttled)
         run: |
           node -v
-          mkdir -p data/raw data/parsed
+          mkdir -p data/raw data/parsed tools/saxon
           TED_MAX_PAGES=$TED_MAX_PAGES TED_MAX_NOTICES=$TED_MAX_NOTICES TED_SEARCH_URL="$TED_SEARCH_URL" npm run scrape || true
+
+      - name: Setup Saxon (download jars)
+        run: |
+          mkdir -p tools/saxon
+          curl -sSL -o tools/saxon/saxon-he.jar https://repo1.maven.org/maven2/net/sf/saxon/Saxon-HE/12.5/Saxon-HE-12.5.jar
+          curl -sSL -o tools/saxon/xmlresolver.jar https://repo1.maven.org/maven2/org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.jar
+          test -s tools/saxon/saxon-he.jar && test -s tools/saxon/xmlresolver.jar
 
       - name: Fallback sweep (recent IDs)
         run: |

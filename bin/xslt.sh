@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-in_xml="${1:?input XML required}"
-out_xml="${2:?output XML required}"
-BASE="$(dirname "$0")/.."
-CP="$BASE/tools/saxon/saxon-he.jar:$BASE/tools/saxon/xmlresolver.jar"
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <input.xml> <output.xml>" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SAXON_JAR="$ROOT_DIR/tools/saxon/saxon-he.jar"
+RESOLVER_JAR="$ROOT_DIR/tools/saxon/xmlresolver.jar"
+
+# Linux/Unix classpath separator is ':'
+CP="$SAXON_JAR:$RESOLVER_JAR"
+
 exec java -cp "$CP" net.sf.saxon.Transform \
-  -s:"$in_xml" \
-  -xsl:"$BASE/xslt/ted_to_simple_ubl.xsl" \
-  -o:"$out_xml"
+  -xsl:"$ROOT_DIR/xslt/ted_to_simple_ubl.xsl" \
+  -s:"$1" \
+  -o:"$2"
