@@ -1,0 +1,38 @@
+name: TED monster scrape
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "22 2 * * *"  # daily @ 02:22 UTC
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TED_SEARCH_URL: "https://ted.europa.eu/en/advanced-search?search-txt=&published=90&nature-of-contract=all&language=en"
+      TED_MAX_PAGES: "50"
+      TED_MAX_NOTICES: "2000"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PGSSLMODE: "require"
+      PLAYWRIGHT_BROWSERS_PATH: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Scrape XML (throttled)
+        run: |
+          node -v
+          mkdir -p data/raw data/parsed
+          TED_MAX_PAGES=$TED_MAX_PAGES TED_MAX_NOTICES=$TED_MAX_NOTICES TED_SEARCH_URL="$TED_SEARCH_URL" npm run scrape
+
+      - name: Ingest to Postgres
+        run: npm run ingest
