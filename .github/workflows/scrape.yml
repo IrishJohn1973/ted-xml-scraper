@@ -13,9 +13,15 @@ jobs:
       TED_SEARCH_URL: "https://ted.europa.eu/en/advanced-search?search-txt=&published=90&nature-of-contract=all&language=en"
       TED_MAX_PAGES: "50"
       TED_MAX_NOTICES: "2000"
+      # Fallback sweep window (tune as needed)
+      YEAR: "2025"
+      START_ID: "636260"
+      END_ID: "635800"
+      MAX_MISS: "220"
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PGSSLMODE: "require"
       PLAYWRIGHT_BROWSERS_PATH: "0"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +38,18 @@ jobs:
         run: |
           node -v
           mkdir -p data/raw data/parsed
-          TED_MAX_PAGES=$TED_MAX_PAGES TED_MAX_NOTICES=$TED_MAX_NOTICES TED_SEARCH_URL="$TED_SEARCH_URL" npm run scrape
+          TED_MAX_PAGES=$TED_MAX_PAGES TED_MAX_NOTICES=$TED_MAX_NOTICES TED_SEARCH_URL="$TED_SEARCH_URL" npm run scrape || true
+
+      - name: Fallback sweep (recent IDs)
+        run: |
+          COUNT=$(ls -1 data/raw/*.xml 2>/dev/null | wc -l || true)
+          echo "XML files so far: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No XML from search; running fallback brute-force sweep..."
+            YEAR="$YEAR" START_ID="$START_ID" END_ID="$END_ID" MAX_MISS="$MAX_MISS" node src/bruteforce_ids.mjs
+          else
+            echo "Skipping fallback; we already have files."
+          fi
 
       - name: Ingest to Postgres
         run: npm run ingest
