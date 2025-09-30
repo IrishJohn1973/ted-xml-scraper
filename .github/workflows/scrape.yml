@@ -3,9 +3,11 @@ name: TED monster scrape
 on:
   workflow_dispatch:
   schedule:
-    - cron: "22 2 * * *"  # daily @ 02:22 UTC
+    - cron: "22 2 * * *"      # daily @ 02:22 UTC (daily sweep)
+    - cron: "11 3 * * 0"      # weekly @ 03:11 UTC Sundays (180-day backfill)
 
 jobs:
+  # -------- Daily: dynamic sweep from DB max (downwards) --------
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -13,18 +15,14 @@ jobs:
       TED_SEARCH_URL: "https://ted.europa.eu/en/advanced-search?search-txt=&published=90&nature-of-contract=all&language=en"
       TED_MAX_PAGES: "50"
       TED_MAX_NOTICES: "2000"
-      YEAR: "2025"
       MAX_MISS: "300"
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PGSSLMODE: "require"
       PLAYWRIGHT_BROWSERS_PATH: "0"
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+        with: { node-version: "20" }
 
       - name: Install deps
         run: |
@@ -44,6 +42,9 @@ jobs:
           curl -sSL -o tools/saxon/xmlresolver.jar https://repo1.maven.org/maven2/org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.jar
           test -s tools/saxon/saxon-he.jar && test -s tools/saxon/xmlresolver.jar
 
+      - name: Set YEAR (auto)
+        run: echo "YEAR=$(date +%Y)" >> "$GITHUB_ENV"
+
       - name: Compute dynamic fallback bounds (from DB)
         run: |
           node - <<'NODE'
@@ -52,34 +53,32 @@ jobs:
             const year = process.env.YEAR || '2025';
             const client = new Client({
               connectionString: process.env.DATABASE_URL,
-              ssl: { rejectUnauthorized: false } // self-signed on PG
+              ssl: { rejectUnauthorized: false }
             });
             await client.connect();
-            const q = `
+            const r = await client.query(`
               select max((split_part(source_id,'-',1))::int) as max_id
               from tb.ted_staging_std
               where split_part(source_id,'-',2) = $1
-            `;
-            const r = await client.query(q, [year]);
-            let maxId = r.rows[0]?.max_id || 636100;
-            let start = maxId + 50;                   // probe just above latest seen
-            let end   = Math.max(maxId - 2000, 630000); // sweep downward ~2000 ids
-            console.log('From DB max_id:', maxId, '=> START_ID', start, 'END_ID', end);
+            `, [year]);
+            const maxId = r.rows[0]?.max_id || 636000;
+            const start = maxId + 50;                  // start above last seen
+            const end   = Math.max(maxId - 2000, 630000); // scan downward ~2000 ids
+            console.log('Daily bounds:', {year, maxId, start, end});
             require('fs').appendFileSync(process.env.GITHUB_ENV, `START_ID=${start}\nEND_ID=${end}\n`);
             await client.end();
           })().catch(e => { console.error(e); process.exit(0); });
           NODE
 
-      - name: Fallback sweep (recent IDs, downward from START_ID)
+      - name: Fallback sweep (downwards)
         run: |
           COUNT=$(ls -1 data/raw/*.xml 2>/dev/null | wc -l || true)
           echo "XML files so far: $COUNT"
           if [ "$COUNT" -eq 0 ]; then
-            echo "No XML from search; running fallback brute-force sweep..."
-            echo "Using START_ID=$START_ID END_ID=$END_ID MAX_MISS=$MAX_MISS"
+            echo "Running fallback sweep: YEAR=$YEAR START_ID=$START_ID END_ID=$END_ID MAX_MISS=$MAX_MISS"
             YEAR="$YEAR" START_ID="$START_ID" END_ID="$END_ID" MAX_MISS="$MAX_MISS" node src/bruteforce_ids.mjs
           else
-            echo "Skipping fallback; we already have files."
+            echo "Skipping fallback; already have files."
           fi
 
       - name: Upload raw XMLs (artifact)
@@ -89,6 +88,93 @@ jobs:
           path: data/raw/*.xml
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Ingest to Postgres
+        run: NODE_TLS_REJECT_UNAUTHORIZED=0 npm run ingest
+
+  # -------- Weekly: 180-day backfill with wider window --------
+  backfill:
+    needs: []
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'   # only on cron
+    timeout-minutes: 420
+    env:
+      TED_SEARCH_URL: "https://ted.europa.eu/en/advanced-search?search-txt=&published=180&nature-of-contract=all&language=en"
+      TED_MAX_PAGES: "50"
+      TED_MAX_NOTICES: "4000"
+      MAX_MISS: "800"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PGSSLMODE: "require"
+      PLAYWRIGHT_BROWSERS_PATH: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Install deps
+        run: |
+          npm install
+          npx playwright install --with-deps
+
+      - name: Scrape XML (throttled, 180d)
+        run: |
+          node -v
+          mkdir -p data/raw data/parsed tools/saxon
+          TED_MAX_PAGES=$TED_MAX_PAGES TED_MAX_NOTICES=$TED_MAX_NOTICES TED_SEARCH_URL="$TED_SEARCH_URL" npm run scrape || true
+
+      - name: Setup Saxon (download jars)
+        run: |
+          mkdir -p tools/saxon
+          curl -sSL -o tools/saxon/saxon-he.jar https://repo1.maven.org/maven2/net/sf/saxon/Saxon-HE/12.5/Saxon-HE-12.5.jar
+          curl -sSL -o tools/saxon/xmlresolver.jar https://repo1.maven.org/maven2/org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.jar
+          test -s tools/saxon/saxon-he.jar && test -s tools/saxon/xmlresolver.jar
+
+      - name: Set YEAR (auto)
+        run: echo "YEAR=$(date +%Y)" >> "$GITHUB_ENV"
+
+      - name: Compute wide fallback bounds (from DB)
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const year = process.env.YEAR || '2025';
+            const client = new Client({
+              connectionString: process.env.DATABASE_URL,
+              ssl: { rejectUnauthorized: false }
+            });
+            await client.connect();
+            const r = await client.query(`
+              select max((split_part(source_id,'-',1))::int) as max_id
+              from tb.ted_staging_std
+              where split_part(source_id,'-',2) = $1
+            `, [year]);
+            const maxId = r.rows[0]?.max_id || 636000;
+            const start = maxId + 100;                   // small probe above
+            const end   = Math.max(maxId - 12000, 620000); // sweep ~12k ids downward
+            console.log('Backfill bounds:', {year, maxId, start, end});
+            require('fs').appendFileSync(process.env.GITHUB_ENV, `START_ID=${start}\nEND_ID=${end}\n`);
+            await client.end();
+          })().catch(e => { console.error(e); process.exit(0); });
+          NODE
+
+      - name: Fallback sweep (downwards, wide)
+        run: |
+          COUNT=$(ls -1 data/raw/*.xml 2>/dev/null | wc -l || true)
+          echo "XML files so far: $COUNT"
+          if [ "$COUNT" -lt 50 ]; then
+            echo "Backfill fallback sweep: YEAR=$YEAR START_ID=$START_ID END_ID=$END_ID MAX_MISS=$MAX_MISS"
+            YEAR="$YEAR" START_ID="$START_ID" END_ID="$END_ID" MAX_MISS="$MAX_MISS" node src/bruteforce_ids.mjs
+          else
+            echo "Skipping fallback; scraper found many files."
+          fi
+
+      - name: Upload raw XMLs (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ted-raw-xml-backfill-${{ github.run_id }}
+          path: data/raw/*.xml
+          if-no-files-found: warn
+          retention-days: 21
 
       - name: Ingest to Postgres
         run: NODE_TLS_REJECT_UNAUTHORIZED=0 npm run ingest
