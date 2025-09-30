@@ -12,10 +12,11 @@
 
   <xsl:output method="xml" indent="yes"/>
 
-  <!-- strip trailing +hh:mm from date/time -->
+  <!-- strip trailing Z or +hh:mm from a date/time string -->
   <xsl:function name="f:clean" as="xs:string?">
     <xsl:param name="s" as="xs:string?"/>
-    <xsl:sequence select="replace(normalize-space(string($s)), '\+\d{2}:\d{2}$', '')"/>
+    <xsl:variable name="t" select="normalize-space(string($s))"/>
+    <xsl:sequence select="replace($t, '(?:\+\d{2}:\d{2}|Z)$', '')"/>
   </xsl:function>
 
   <!-- org lookup -->
@@ -87,7 +88,8 @@
       </cpv_codes>
 
       <published_at>
-        <xsl:value-of select="normalize-space(((//efext:EformsExtension/efac:Publication/efbc:PublicationDate)[1], concat(f:clean(($root/cbc:IssueDate)[1]),'T', f:clean(($root/cbc:IssueTime)[1])))[1])"/>
+        <xsl:value-of select="normalize-space( ( f:clean((//efext:EformsExtension/efac:Publication/efbc:PublicationDate)[1]),
+                                                  concat(f:clean(($root/cbc:IssueDate)[1]),'T', f:clean(($root/cbc:IssueTime)[1])) )[1])"/>
       </published_at>
 
       <deadline>
