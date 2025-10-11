@@ -1,0 +1,10 @@
+.env
+.env.local
+node_modules/
+*.log
+raw/
+*.xml
+*.tar.gz
+.DS_Store
+*.backup
+.fly/
