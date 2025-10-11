@@ -1,6 +1,5 @@
 // TED daily ingester - downloads, parses, saves raw XML + cleaned data
 import fetch from "node-fetch";
-import dotenv from "dotenv";
 import { Client } from "pg";
 import tar from "tar-stream";
 import zlib from "zlib";
@@ -8,7 +7,6 @@ import { XMLParser } from "fast-xml-parser";
 import { DateTime } from "luxon";
 import { randomUUID, createHash } from "node:crypto";
 
-dotenv.config();
 
 // Database connection with SSL disabled
 async function connectDb() {
