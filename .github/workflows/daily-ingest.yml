@@ -9,23 +9,18 @@ jobs:
   ingest:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
+      - name: Install
         run: npm ci
-      - name: Run ingester for yesterday
+      - name: Ingest
         env:
           SUPA_DB_HOST: ${{ secrets.SUPA_DB_HOST }}
           SUPA_DB: ${{ secrets.SUPA_DB }}
           SUPA_DB_USER: ${{ secrets.SUPA_DB_USER }}
           SUPA_DB_PASS: ${{ secrets.SUPA_DB_PASS }}
-          TZ: Europe/Dublin
-        run: |
-          YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
-          echo "Ingesting data for: $YESTERDAY"
-          node ingest_daily_package.mjs --date=$YESTERDAY
-
+        run: node ingest_daily_package.mjs --date=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
