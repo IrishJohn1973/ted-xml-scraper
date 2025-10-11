@@ -1,10 +1,31 @@
+# Environment variables
 .env
 .env.local
+.env.*.local
+
+# Dependencies
 node_modules/
-*.log
+package-lock.json
+
+# Raw data
 raw/
 *.xml
-*.tar.gz
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
 .DS_Store
-*.backup
-.fly/
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
