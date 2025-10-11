@@ -13,10 +13,14 @@ jobs:
       SUPA_DB: ${{ secrets.SUPA_DB }}
       SUPA_DB_USER: ${{ secrets.SUPA_DB_USER }}
       SUPA_DB_PASS: ${{ secrets.SUPA_DB_PASS }}
+      SUPA_DB_PORT: ${{ secrets.SUPA_DB_PORT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - run: npm ci
-      - run: node ingest_daily_package.mjs --date=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
+      - name: Ensure database schema exists
+        run: node run_schema.mjs
+      - name: Ingest TED data
+        run: node ingest_daily_package.mjs --date=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
