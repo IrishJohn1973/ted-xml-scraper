@@ -1,0 +1,22 @@
+name: TED Daily Scraper
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '10 7 * * 2-6'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: node ingest_daily_package.mjs --date=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
+        env:
+          SUPA_DB_HOST: ${{ secrets.SUPA_DB_HOST }}
+          SUPA_DB: ${{ secrets.SUPA_DB }}
+          SUPA_DB_USER: ${{ secrets.SUPA_DB_USER }}
+          SUPA_DB_PASS: ${{ secrets.SUPA_DB_PASS }}
